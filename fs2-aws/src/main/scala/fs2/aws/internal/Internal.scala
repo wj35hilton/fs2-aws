@@ -63,7 +63,7 @@ object Internal {
   class KinesisProducerClient[F[_]] extends Producer[F] {
 
     val credentials: AWSCredentialsProviderChain = new DefaultAWSCredentialsProviderChain()
-    val region: Option[String]                   = None
+    val region: Option[String]                   = Some("us-east-1")
 
     private lazy val config: KinesisProducerConfiguration = {
       val c = new KinesisProducerConfiguration()
