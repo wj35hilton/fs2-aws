@@ -4,24 +4,30 @@ import java.io.{ByteArrayInputStream, InputStream}
 
 import cats.effect.{ContextShift, Effect}
 import cats.implicits._
-import com.amazonaws.services.s3.model._
-import fs2.{Chunk, Pull, Stream}
-import fs2.io.readInputStream
-import fs2.aws.internal._
+import software.amazon.awssdk.services.s3.model._
+import fs2.aws.internal.Internal._
 
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext
 
 package object s3 {
+  type PartETag = String
+
   def readS3FileMultipart[F[_]](
       bucket: String,
       key: String,
       chunkSize: Int,
-      s3Client: S3Client[F] = new S3Client[F] {})(implicit F: Effect[F]): Stream[F, Byte] = {
-    def go(offset: Int)(implicit F: Effect[F]): Pull[F, Byte, Unit] =
-      Pull
-        .acquire[F, Either[Throwable, InputStream]](s3Client.getObjectContentOrError(
-          new GetObjectRequest(bucket, key).withRange(offset, offset + chunkSize))) {
+      s3Client: S3Client[F] = new S3Client[F] {})(implicit F: Effect[F]): fs2.Stream[F, Byte] = {
+    def go(offset: Int)(implicit F: Effect[F]): fs2.Pull[F, Byte, Unit] =
+      fs2.Pull
+        .acquire[F, Either[Throwable, InputStream]](
+          s3Client.getObjectContentOrError(
+            GetObjectRequest
+              .builder()
+              .bucket(bucket)
+              .key(key)
+              .range(s"$offset-${offset + chunkSize}")
+              .build())) {
           //todo: properly log the error
           case Left(e)  => F.delay(() => e.printStackTrace())
           case Right(s) => F.delay(s.close())
@@ -68,14 +74,17 @@ package object s3 {
           Stream.eval(
             s3Client
               .uploadPart(
-                new UploadPartRequest()
-                  .withBucketName(bucket)
-                  .withKey(key)
-                  .withUploadId(uploadId)
-                  .withPartNumber(i.toInt)
-                  .withPartSize(c.size)
-                  .withInputStream(new ByteArrayInputStream(c.toArray)))
-              .flatMap(r => F.delay(r.getPartETag)))
+                UploadPartRequest()
+                  .builder()
+                  .bucket(bucket)
+                  .key(key)
+                  .uploadId(uploadId)
+                  .partNumber(i.toInt)
+                  .contentLength(c.size)
+                  .build(),
+                RequestBody.fromBytes(c.toArray)
+              )
+              .flatMap(r => F.delay(r.eTag)))
       })
 
     def completeUpload(uploadId: String): fs2.Sink[F, List[PartETag]] =
@@ -86,11 +95,13 @@ package object s3 {
 
     in =>
       {
-        val imuF: F[InitiateMultipartUploadResult] = objectMetadata match {
+        val imuF: F[CreateMultipartUploadRequest] = objectMetadata match {
           case Some(o) =>
-            s3Client.initiateMultipartUpload(new InitiateMultipartUploadRequest(bucket, key, o))
+            s3Client.initiateMultipartUpload(
+              CreateMultipartUploadRequest.builder().bucket(bucket).key(key).metadata(o).build())
           case None =>
-            s3Client.initiateMultipartUpload(new InitiateMultipartUploadRequest(bucket, key))
+            s3Client.initiateMultipartUpload(
+              CreateMultipartUploadRequest.builder().bucket(bucket).key(key).build())
         }
         val mui: F[MultiPartUploadInfo] =
           imuF.flatMap(imu => F.pure(MultiPartUploadInfo(imu.getUploadId, List())))
