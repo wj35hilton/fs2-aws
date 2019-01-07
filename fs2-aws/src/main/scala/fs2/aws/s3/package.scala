@@ -1,11 +1,13 @@
 package fs2.aws
 
-import java.io.{ByteArrayInputStream, InputStream}
+import java.io.InputStream
 
+import fs2.{Stream, Pull, Chunk}
+import fs2.aws.internal._
 import cats.effect.{ContextShift, Effect}
 import cats.implicits._
 import software.amazon.awssdk.services.s3.model._
-import fs2.aws.internal.Internal._
+import software.amazon.awssdk.core.sync.RequestBody
 
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext
@@ -57,69 +59,93 @@ package object s3 {
                        s3Client: S3Client[F] = new S3Client[F] {})(
       implicit F: Effect[F],
       cs: ContextShift[F]): Stream[F, Byte] = {
-    readInputStream[F](s3Client.getObjectContent(new GetObjectRequest(bucket, key)),
-                       chunkSize = 8192,
-                       blockingExecutionContext = blockingEC,
-                       closeAfterUse = true)
+    val request = GetObjectRequest.builder().bucket(bucket).key(key).build()
+    fs2.io.readInputStream(
+      s3Client.getObjectStream(request),
+      chunkSize = 8192,
+      blockingExecutionContext = blockingEC,
+      closeAfterUse = true
+    )
   }
 
   def uploadS3FileMultipart[F[_]](
       bucket: String,
       key: String,
-      objectMetadata: Option[ObjectMetadata] = None,
+      objectMetadata: Map[String, String] = Map.empty,
       s3Client: S3Client[F] = new S3Client[F] {})(implicit F: Effect[F]): fs2.Sink[F, Byte] = {
-    def uploadPart(uploadId: String): fs2.Pipe[F, (Chunk[Byte], Long), PartETag] =
+    def uploadPart(uploadId: String): fs2.Pipe[F, (Chunk[Byte], Int), CompletedPart] =
       _.flatMap({
         case (c, i) =>
           Stream.eval(
             s3Client
               .uploadPart(
-                UploadPartRequest()
+                UploadPartRequest
                   .builder()
                   .bucket(bucket)
                   .key(key)
                   .uploadId(uploadId)
-                  .partNumber(i.toInt)
+                  .partNumber(i)
                   .contentLength(c.size)
                   .build(),
                 RequestBody.fromBytes(c.toArray)
               )
-              .flatMap(r => F.delay(r.eTag)))
+              .flatMap(
+                r =>
+                  F.delay(
+                    CompletedPart.builder().partNumber(i).eTag(r.eTag).build()
+                )
+              )
+          )
       })
 
-    def completeUpload(uploadId: String): fs2.Sink[F, List[PartETag]] =
-      _.flatMap(
-        parts =>
-          Stream.eval_(s3Client.completeMultipartUpload(
-            new CompleteMultipartUploadRequest(bucket, key, uploadId, parts.asJava))))
+    def completeUpload(uploadId: String): fs2.Sink[F, List[CompletedPart]] =
+      _.flatMap { parts =>
+        val completedMultipartUpload: CompletedMultipartUpload =
+          CompletedMultipartUpload.builder.parts(parts: _*).build()
+        Stream.eval_(
+          s3Client.completeMultipartUpload(
+            CompleteMultipartUploadRequest.builder
+              .bucket(bucket)
+              .key(key)
+              .uploadId(uploadId)
+              .multipartUpload(completedMultipartUpload)
+              .build
+          )
+        )
+      }
 
     in =>
       {
-        val imuF: F[CreateMultipartUploadRequest] = objectMetadata match {
-          case Some(o) =>
-            s3Client.initiateMultipartUpload(
-              CreateMultipartUploadRequest.builder().bucket(bucket).key(key).metadata(o).build())
-          case None =>
-            s3Client.initiateMultipartUpload(
+        val imuF: F[CreateMultipartUploadResponse] = objectMetadata match {
+          case map if map.toSeq == Nil =>
+            s3Client.createMultipartUpload(
               CreateMultipartUploadRequest.builder().bucket(bucket).key(key).build())
+          case map =>
+            s3Client.createMultipartUpload(
+              CreateMultipartUploadRequest
+                .builder()
+                .bucket(bucket)
+                .key(key)
+                .metadata(map.asJava)
+                .build())
         }
-        val mui: F[MultiPartUploadInfo] =
-          imuF.flatMap(imu => F.pure(MultiPartUploadInfo(imu.getUploadId, List())))
         Stream
-          .eval(mui)
+          .eval(imuF)
           .flatMap(
             m =>
               in.chunks
-                .zip(Stream.iterate(1L)(_ + 1))
+                .zip(Stream.iterate(1)(_ + 1))
                 .through(uploadPart(m.uploadId))
-                .fold[List[PartETag]](List())(_ :+ _)
+                .fold[List[CompletedPart]](List())(_ :+ _)
                 .to(completeUpload(m.uploadId)))
       }
   }
 
   def listFiles[F[_]](bucketName: String, s3Client: S3Client[F] = new S3Client[F] {})(
-      implicit F: Effect[F]): Stream[F, S3ObjectSummary] = {
-    val req = new ListObjectsV2Request().withBucketName(bucketName)
-    Stream.eval(s3Client.s3ObjectSummaries(req)).flatMap(list => Stream.emits(list))
+      implicit F: Effect[F]): Stream[F, S3Object] = {
+    val req = ListObjectsV2Request.builder.bucket(bucketName).build
+    Stream
+      .eval(s3Client.listObjects(req))
+      .flatMap(resp => Stream.fromIterator(resp.contents.iterator.asScala))
   }
 }
