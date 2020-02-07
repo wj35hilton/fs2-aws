@@ -34,9 +34,9 @@ object CommittableRecord {
   // Records that have been batched by the KCL producer all have the
   // same sequence number but will differ by subsequence number
   implicit val orderBySequenceNumber: Ordering[CommittableRecord] =
-    Ordering[(String, Long)].on(cr ⇒
+    Ordering[(String, Long)].on(cr =>
       (cr.sequenceNumber, cr.record match {
-        case ur: KinesisClientRecord ⇒ ur.subSequenceNumber()
-        case _                       ⇒ 0
+        case ur: KinesisClientRecord => ur.subSequenceNumber()
+        case _                       => 0
       }))
 }

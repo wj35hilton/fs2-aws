@@ -1,7 +1,11 @@
 name := "fs2-aws"
 organization in ThisBuild := "io.github.dmateusp"
 
-scalaVersion := "2.12.9"
+lazy val scala212 = "2.12.9"
+lazy val scala213 = "2.13.0"
+lazy val supportedScalaVersions = List(scala213, scala212)
+
+scalaVersion := scala213
 
 scalacOptions in ThisBuild ++= Seq(
   "-target:jvm-1.8",
@@ -13,17 +17,31 @@ scalacOptions in ThisBuild ++= Seq(
   "-language:higherKinds", // allow higher kinded types without `import scala.language.higherKinds`
   "-language:implicitConversions", // allow use of implicit conversions
   "-Xlint", // enable handy linter warnings
-  "-Xfatal-warnings", // turn compiler warnings into errors
-  "-Ypartial-unification" // allow the compiler to unify type constructors of different arities
+  "-Xfatal-warnings" // turn compiler warnings into errors
 )
+
+def enablePartialUnificationIn2_12(scalaVersion: String) =
+  CrossVersion.partialVersion(scalaVersion) match {
+    case Some((2, 12)) => Seq("-Ypartial-unification")
+    case _ => Seq()
+  }
+
 lazy val root = (project in file("."))
   .aggregate(`fs2-aws`, `fs2-aws-testkit`)
   .settings(
+    crossScalaVersions := Nil,
     skip in publish := true
   )
 
 lazy val `fs2-aws`         = (project in file("fs2-aws"))
-lazy val `fs2-aws-testkit` = (project in file("fs2-aws-testkit")).dependsOn(`fs2-aws`)
+  .settings(
+    crossScalaVersions := supportedScalaVersions,
+    scalacOptions ++= enablePartialUnificationIn2_12(scalaVersion.value)
+  )
+lazy val `fs2-aws-testkit` = (project in file("fs2-aws-testkit"))
+  .settings(
+    crossScalaVersions := supportedScalaVersions)
+  .dependsOn(`fs2-aws`)
 
 addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.9.10")
 

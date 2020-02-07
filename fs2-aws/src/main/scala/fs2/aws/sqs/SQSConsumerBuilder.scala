@@ -6,7 +6,8 @@ import com.amazonaws.services.sqs.AmazonSQSClientBuilder
 import eu.timepit.refined.auto._
 import javax.jms.{MessageListener, Session}
 
-import scala.language.higherKinds
+// TODO: revisit this ... it may be needed in a 2.12 build
+// import scala.language.higherKinds
 
 class SQSConsumerBuilder[F[_]](val sqsConfig: SqsConfig, val listener: MessageListener)(
     implicit F: Effect[F])

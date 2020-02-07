@@ -74,7 +74,7 @@ object publisher {
       producer: KinesisProducerClient[F] = new KinesisProducerClientImpl[F]
   ): Pipe[F, (String, ByteBuffer), Unit] = {
 
-    _.through(write(streamName, producer)).as(Unit)
+    _.through(write(streamName, producer)).as(())
   }
 
   /** Writes the (partitionKey, payload) to a Kinesis stream via a Pipe

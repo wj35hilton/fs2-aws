@@ -2,7 +2,7 @@ package fs2.aws.kinesis
 
 import software.amazon.kinesis.lifecycle.events._
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.concurrent.duration.FiniteDuration
 
 /** Concrete implementation of the AWS RecordProcessor interface.

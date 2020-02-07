@@ -6,7 +6,7 @@ import cats.effect.Effect
 import com.amazonaws.services.s3.AmazonS3ClientBuilder
 import com.amazonaws.services.s3.model._
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.util.control.Exception
 
 private[aws] trait S3Client[F[_]] {
@@ -18,6 +18,9 @@ private[aws] trait S3Client[F[_]] {
 
   def getObjectContent(getObjectRequest: GetObjectRequest)(implicit F: Effect[F]): F[InputStream] =
     F.delay(client.getObject(getObjectRequest).getObjectContent)
+
+  def putObject(putObjectRequest: PutObjectRequest)(implicit F: Effect[F]): F[Unit] =
+    F.delay(client.putObject(putObjectRequest))
 
   def initiateMultipartUpload(initiateMultipartUploadRequest: InitiateMultipartUploadRequest)(
       implicit F: Effect[F]): F[InitiateMultipartUploadResult] =

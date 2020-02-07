@@ -25,7 +25,7 @@ import software.amazon.kinesis.processor.{ShardRecordProcessor, ShardRecordProce
 import software.amazon.kinesis.retrieval.KinesisClientRecord
 import software.amazon.kinesis.retrieval.kpl.ExtendedSequenceNumber
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -313,11 +313,11 @@ class KinesisConsumerSpec extends FlatSpec with Matchers with BeforeAndAfterEach
     }
 
     val config =
-      KinesisConsumerSettings("testStream", "testApp", Region.US_EAST_1, 10, 10, 10.seconds).right.get
+      KinesisConsumerSettings("testStream", "testApp", Region.US_EAST_1, 10, 10, 10.seconds).getOrElse(???)
 
     val stream =
       readFromKinesisStream[IO](config, builder)
-        .through(_.evalMap(i => IO(output = output :+ i)))
+        .through(_.evalMap(i => IO.delay{ output = output :+ i }))
         .map(i => if (errorStream) throw new Exception("boom") else i)
         .compile
         .toVector
@@ -357,7 +357,7 @@ class KinesisConsumerSpec extends FlatSpec with Matchers with BeforeAndAfterEach
     val recordProcessor    = new SingleRecordProcessor(_ => (), 1.seconds)
     val checkpointerShard1 = mock(classOf[ShardRecordProcessorCheckpointer])
     val settings =
-      KinesisCheckpointSettings(maxBatchSize = Int.MaxValue, maxBatchWait = 500.millis).right
+      KinesisCheckpointSettings(maxBatchSize = Int.MaxValue, maxBatchWait = 500.millis)
         .getOrElse(throw new Error())
 
     def startStream(input: Seq[CommittableRecord]) =

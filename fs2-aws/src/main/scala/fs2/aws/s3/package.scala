@@ -9,7 +9,7 @@ import fs2.{Chunk, Pull, Stream}
 import fs2.io.readInputStream
 import fs2.aws.internal._
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.concurrent.ExecutionContext
 
 package object s3 {
@@ -108,9 +108,43 @@ package object s3 {
       }
   }
 
+  def uploadS3File[F[_]](bucket: String,
+                         key: String,
+                         objectMetadata: Option[ObjectMetadata] = None,
+                         s3Client: S3Client[F] = new S3Client[F] {})(
+      implicit F: Effect[F]): fs2.Pipe[F, Byte, Unit] = {
+    def go(s: Stream[F, Byte], cs: List[Chunk[Byte]]): Pull[F, Unit, Unit] = {
+      s.pull.uncons.flatMap {
+        case Some((hd, tl)) => go(tl, hd :: cs)
+        case None => {
+          val content = cs.map(_.toArray).fold(Array[Byte]())((a, c) => c ++ a)
+          val metadata = objectMetadata.getOrElse(new ObjectMetadata())
+          metadata.setContentLength(content.size)
+          Pull.eval(
+            s3Client
+              .putObject(
+                new PutObjectRequest(
+                  bucket,
+                  key,
+                  new ByteArrayInputStream(content),
+                  metadata))) >> Pull.done
+        }
+      }
+    }
+    in => go(in, List()).stream
+  }
+
   def listFiles[F[_]](bucketName: String, s3Client: S3Client[F] = new S3Client[F] {})(
       implicit F: Effect[F]): Stream[F, S3ObjectSummary] = {
     val req = new ListObjectsV2Request().withBucketName(bucketName)
+    Stream.eval(s3Client.s3ObjectSummaries(req)).flatMap(list => Stream.emits(list))
+  }
+
+  def listFilesWithPrefix[F[_]](bucketName: String, prefix: String, s3Client: S3Client[F] = new S3Client[F] {})(
+      implicit F: Effect[F]): Stream[F, S3ObjectSummary] = {
+    val req = new ListObjectsV2Request()
+      .withBucketName(bucketName)
+      .withPrefix(prefix)
     Stream.eval(s3Client.s3ObjectSummaries(req)).flatMap(list => Stream.emits(list))
   }
 }
