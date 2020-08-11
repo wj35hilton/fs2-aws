@@ -6,11 +6,14 @@ import cats.effect.{Blocker, ContextShift, Effect}
 import cats.implicits._
 import com.amazonaws.services.s3.model._
 import fs2.{Chunk, Pull, Stream}
+import fs2.Collector._
 import fs2.io.readInputStream
 import fs2.aws.internal._
 
 import scala.jdk.CollectionConverters._
 import scala.concurrent.ExecutionContext
+
+import scodec.bits.ByteVector
 
 package object s3 {
   def readS3FileMultipart[F[_]](
@@ -113,11 +116,13 @@ package object s3 {
                          objectMetadata: Option[ObjectMetadata] = None,
                          s3Client: S3Client[F] = new S3Client[F] {})(
       implicit F: Effect[F]): fs2.Pipe[F, Byte, Unit] = {
-    def go(s: Stream[F, Byte], cs: List[Chunk[Byte]]): Pull[F, Unit, Unit] = {
+    def go(s: Stream[F, Byte], coll: fs2.Collector.Builder[Byte, ByteVector]): Pull[F, Unit, Unit] = {
       s.pull.uncons.flatMap {
-        case Some((hd, tl)) => go(tl, hd :: cs)
+        case Some((hd, tl)) =>
+          coll += hd
+          go(tl, coll)
         case None => {
-          val content = cs.map(_.toArray).fold(Array[Byte]())((a, c) => c ++ a)
+          val content = coll.result.toArray
           val metadata = objectMetadata.getOrElse(new ObjectMetadata())
           metadata.setContentLength(content.size)
           Pull.eval(
@@ -131,7 +136,7 @@ package object s3 {
         }
       }
     }
-    in => go(in, List()).stream
+    in => go(in, ByteVector.newBuilder).stream
   }
 
   def listFiles[F[_]](bucketName: String, s3Client: S3Client[F] = new S3Client[F] {})(
